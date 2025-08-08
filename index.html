@@ -62,6 +62,11 @@
     .player-btn{padding:8px 12px;border-radius:999px;border:1px solid var(--border);background:#fff;font-weight:700;cursor:pointer}
     .player-btn.active{background:var(--text);color:#fff;border-color:transparent}
     .space{height:8px}
+    .match-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+    .match-title{font-weight:800}
+    .seg{display:flex;gap:6px;align-items:center}
+    .seg .btn{padding:6px 10px}
+    .mini{font-size:12px;color:var(--muted)}
     @media(max-width:640px){
       h1{font-size:20px}
       .btn{padding:8px 10px;font-size:14px}
@@ -158,7 +163,10 @@ function App(){
   const [history,setHistory] = usePersistentState(STORAGE_KEYS.history, []);
   const [roomId,setRoomId] = usePersistentState(STORAGE_KEYS.roomId, getRoomFromQuery() || 'default');
 
-  // Стабилизация ввода
+  // Match-tab state
+  const [currentMatchIdx,setCurrentMatchIdx] = useState(0);
+
+  // Stabilization
   const isApplyingRemoteRef = useRef(false);
   const lastRemoteAtRef = useRef(null);
   const unsubRef = useRef(null);
@@ -178,6 +186,10 @@ function App(){
   },[]);
 
   useEffect(()=> { if(!players.includes(currentPlayer)) setCurrentPlayer(players[0] || ''); },[players]);
+  useEffect(()=> {
+    if (matches.length === 0) { setCurrentMatchIdx(0); return; }
+    if (currentMatchIdx < 0 || currentMatchIdx >= matches.length) setCurrentMatchIdx(0);
+  }, [matches.length]);
 
   // Local CRUD
   function addBlankMatch(){ markEdited(); setMatches(prev => [...prev, { id: uid(), team1:'', team2:'' }]); }
@@ -347,23 +359,77 @@ function App(){
     setHistory(prev => prev.filter(r => r.id!==roundId));
   }
 
-  // Serialize
+  // Build / Apply (safe merge)
   function buildData(){ return { roundName, matches, players, predictions, results, history }; }
   function buildDataWithMeta(){
     const data = buildData();
     return { ...data, _updatedAt: new Date().toISOString(), _updatedBy: DEVICE_ID };
   }
-  function applyImportedData(data){
-    try{
-      setRoundName(data.roundName ?? roundName);
-      setMatches(Array.isArray(data.matches)? data.matches : []);
-      setPlayers(Array.isArray(data.players)? data.players : players);
-      setPredictions(data.predictions ?? {});
-      setResults(data.results ?? {});
-      setHistory(Array.isArray(data.history)? data.history : []);
-    }catch(e){
-      alert('Ошибка применения данных');
-    }
+
+  // ВАЖНО: безопасное применение удалённых данных (не затирает свежий локальный ввод)
+  function applyRemoteData(remote){
+    const remoteAt = Date.parse(remote?._updatedAt || '') || 0;
+    const lastLocal = lastLocalEditAtRef.current || 0;
+    const preferLocal = remoteAt && lastLocal && remoteAt <= lastLocal + 1000;
+
+    // matches
+    const mergedMatches = (()=> {
+      const byId = new Map();
+      (remote.matches||[]).forEach(m=> byId.set(m.id, m));
+      if (preferLocal) (matches||[]).forEach(m=> { if(!byId.has(m.id)) byId.set(m.id, m); });
+      return Array.from(byId.values());
+    })();
+
+    // players
+    const mergedPlayers = (()=> {
+      if (!preferLocal) return remote.players ?? players;
+      const set = new Set([...(players||[]), ...((remote.players)||[])]);
+      return Array.from(set);
+    })();
+
+    // results
+    const mergedResults = (()=> {
+      const out = preferLocal ? {...results} : {};
+      Object.entries(remote.results||{}).forEach(([mid, r])=>{
+        const l = results[mid];
+        if (preferLocal) {
+          const l1 = Number.isInteger(l?.score1), l2 = Number.isInteger(l?.score2);
+          const r1 = Number.isInteger(r?.score1), r2 = Number.isInteger(r?.score2);
+          out[mid] = { score1: r1 ? r.score1 : (l1 ? l.score1 : null),
+                       score2: r2 ? r.score2 : (l2 ? l.score2 : null) };
+        } else {
+          out[mid] = r;
+        }
+      });
+      return out;
+    })();
+
+    // predictions
+    const mergedPredictions = (()=> {
+      const out = preferLocal ? JSON.parse(JSON.stringify(predictions)) : {};
+      Object.entries(remote.predictions||{}).forEach(([mid, per])=>{
+        out[mid] = out[mid] || {};
+        Object.entries(per).forEach(([player, pr])=>{
+          if (preferLocal) {
+            const lp = out[mid][player];
+            const l1 = Number.isInteger(lp?.score1), l2 = Number.isInteger(lp?.score2);
+            const r1 = Number.isInteger(pr?.score1), r2 = Number.isInteger(pr?.score2);
+            out[mid][player] = { score1: r1 ? pr.score1 : (l1 ? lp.score1 : null),
+                                 score2: r2 ? pr.score2 : (l2 ? lp.score2 : null) };
+          } else {
+            out[mid][player] = pr;
+          }
+        });
+      });
+      return out;
+    })();
+
+    setRoundName(preferLocal ? roundName : (remote.roundName ?? roundName));
+    setMatches(mergedMatches);
+    setPlayers(mergedPlayers);
+    setPredictions(mergedPredictions);
+    setResults(mergedResults);
+    setHistory(remote.history ?? history);
   }
 
   // Firestore realtime
@@ -388,7 +454,7 @@ function App(){
             pendingRemoteRef.current = remote;
           }else{
             isApplyingRemoteRef.current = true;
-            applyImportedData(remote);
+            applyRemoteData(remote);
             lastRemoteAtRef.current = remote?._updatedAt || null;
             isApplyingRemoteRef.current = false;
           }
@@ -407,7 +473,7 @@ function App(){
               pendingRemoteRef.current = remote;
             }else{
               isApplyingRemoteRef.current = true;
-              applyImportedData(remote);
+              applyRemoteData(remote);
               lastRemoteAtRef.current = remoteAt;
               isApplyingRemoteRef.current = false;
             }
@@ -440,7 +506,7 @@ function App(){
     return ()=> clearTimeout(handle);
   }, [roundName, matches, players, predictions, results, history, roomId]);
 
-  // Когда пользователь завершил ввод (blur) — применяем отложенные удалённые данные
+  // После blur применяем отложенные удалённые данные
   function handleBlur(){
     focusedFieldRef.current = null;
     setTimeout(()=>{
@@ -448,11 +514,37 @@ function App(){
         const remote = pendingRemoteRef.current;
         pendingRemoteRef.current = null;
         isApplyingRemoteRef.current = true;
-        applyImportedData(remote);
+        applyRemoteData(remote);
         lastRemoteAtRef.current = remote?._updatedAt || null;
         isApplyingRemoteRef.current = false;
       }
     }, 50);
+  }
+
+  // Helpers for match view
+  const currentMatch = matches[currentMatchIdx] || null;
+  const currentMatchRes = currentMatch ? results[currentMatch.id] : null;
+  const outcomeStats = useMemo(()=>{
+    if(!currentMatch) return {home:0,draw:0,away:0,filled:0};
+    let home=0,draw=0,away=0,filled=0;
+    players.forEach(p=>{
+      const pr = predictions[currentMatch.id]?.[p];
+      if(pr && Number.isInteger(pr.score1) && Number.isInteger(pr.score2)){
+        filled++;
+        const o = outcome(pr.score1, pr.score2);
+        if(o>0) home++; else if(o<0) away++; else draw++;
+      }
+    });
+    return {home,draw,away,filled};
+  },[players,predictions,currentMatchIdx,matches,results]);
+
+  function gotoPrevMatch(){
+    if(matches.length===0) return;
+    setCurrentMatchIdx(i=> (i-1+matches.length)%matches.length);
+  }
+  function gotoNextMatch(){
+    if(matches.length===0) return;
+    setCurrentMatchIdx(i=> (i+1)%matches.length);
   }
 
   // UI
@@ -502,6 +594,7 @@ function App(){
         {[
           ['setup','Матчи'],
           ['predictions','Прогнозы'],
+          ['match','Матч'],
           ['results','Результаты'],
           ['scores','Очки'],
           ['history','История'],
@@ -646,6 +739,107 @@ function App(){
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {tab==='match' && (
+        <div className="card">
+          <div className="match-head">
+            <div className="seg">
+              <button className="btn btn-ghost" onClick={gotoPrevMatch} disabled={matches.length===0}>←</button>
+              <button className="btn btn-ghost" onClick={gotoNextMatch} disabled={matches.length===0}>→</button>
+              <select
+                value={String(currentMatchIdx)}
+                onChange={e=>setCurrentMatchIdx(Math.max(0,Math.min(matches.length-1,parseInt(e.target.value)||0)))}
+              >
+                {matches.map((m,idx)=>(
+                  <option key={m.id} value={idx}>{`#${idx+1} — ${m.team1||'—'} vs ${m.team2||'—'}`}</option>
+                ))}
+              </select>
+            </div>
+            <div className="match-title">
+              {currentMatch ? (<>
+                <strong>{currentMatch.team1||'—'}</strong> vs <strong>{currentMatch.team2||'—'}</strong>
+              </>) : 'Нет матчей'}
+            </div>
+            <div className="seg mini">
+              <span className="chip">Исходы: Дома {outcomeStats.home}</span>
+              <span className="chip">Ничья {outcomeStats.draw}</span>
+              <span className="chip">Гости {outcomeStats.away}</span>
+            </div>
+          </div>
+
+          {!currentMatch ? (
+            <div className="muted" style={{marginTop:8}}>Добавьте матчи во вкладке «Матчи».</div>
+          ):(
+            <>
+              <div className="row" style={{marginTop:8, justifyContent:'space-between', alignItems:'center'}}>
+                <div className="chip">Прогнозов заполнено: <strong>{outcomeStats.filled}/{players.length}</strong></div>
+                <div className="row">
+                  <span className="muted">Результат:</span>
+                  <input type="number" min="0"
+                    value={Number.isInteger(currentMatchRes?.score1)?currentMatchRes.score1:''}
+                    onChange={e=>setRes(currentMatch.id, parseIntSafe(e.target.value), currentMatchRes?.score2)}
+                    onFocus={()=>{ focusedFieldRef.current=`mres:${currentMatch.id}:r1`; }}
+                    onBlur={handleBlur}
+                  />
+                  <span>:</span>
+                  <input type="number" min="0"
+                    value={Number.isInteger(currentMatchRes?.score2)?currentMatchRes.score2:''}
+                    onChange={e=>setRes(currentMatch.id, currentMatchRes?.score1, parseIntSafe(e.target.value))}
+                    onFocus={()=>{ focusedFieldRef.current=`mres:${currentMatch.id}:r2`; }}
+                    onBlur={handleBlur}
+                  />
+                </div>
+              </div>
+
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                  <tr>
+                    <th>Игрок</th>
+                    <th>Прогноз</th>
+                    <th>Очки</th>
+                  </tr>
+                  </thead>
+                  <tbody>
+                  {players.map(p=>{
+                    const pr = predictions[currentMatch.id]?.[p] || {};
+                    const pts = pointsFor(pr, currentMatchRes);
+                    return (
+                      <tr key={p}>
+                        <td style={{textAlign:'left'}}><strong>{p}</strong></td>
+                        <td>
+                          <div className="row" style={{justifyContent:'center'}}>
+                            <input type="number" min="0"
+                              value={Number.isInteger(pr.score1)?pr.score1:''}
+                              onChange={e=>setPred(currentMatch.id, p, parseIntSafe(e.target.value), pr.score2)}
+                              onFocus={()=>{ focusedFieldRef.current=`mpred:${currentMatch.id}:${p}:p1`; }}
+                              onBlur={handleBlur}
+                            />
+                            <span>:</span>
+                            <input type="number" min="0"
+                              value={Number.isInteger(pr.score2)?pr.score2:''}
+                              onChange={e=>setPred(currentMatch.id, p, pr.score1, parseIntSafe(e.target.value))}
+                              onFocus={()=>{ focusedFieldRef.current=`mpred:${currentMatch.id}:${p}:p2`; }}
+                              onBlur={handleBlur}
+                            />
+                          </div>
+                        </td>
+                        <td>
+                          {pts===3 && <span className="pill pill-ok">3</span>}
+                          {pts===2 && <span className="pill pill-diff">2</span>}
+                          {pts===1 && <span className="pill pill-warn">1</span>}
+                          {(pts===0 || pts==null) && <span className="pill pill-bad">0</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
 
