@@ -143,10 +143,19 @@ function App(){
   const [history,setHistory] = usePersistentState(STORAGE_KEYS.history, []);
   const [roomId,setRoomId] = usePersistentState(STORAGE_KEYS.roomId, getRoomFromQuery() || 'default');
 
+  // Стабилизация ввода
   const isApplyingRemoteRef = useRef(false);
   const lastRemoteAtRef = useRef(null);
   const unsubRef = useRef(null);
   const hasInitialSyncRef = useRef(false);
+
+  const focusedFieldRef = useRef(null);       // 'm:<id>:team1' | 'pred:<id>:p1' | etc
+  const pendingRemoteRef = useRef(null);      // откладываемое удалённое состояние
+  const lastLocalEditAtRef = useRef(0);       // когда последний раз редактировали
+  const AUTOSAVE_DELAY_MS = 2000;             // подождать паузу
+  const EDIT_GRACE_MS = 1200;                 // окно "печатаю" — не мешать
+
+  const markEdited = ()=>{ lastLocalEditAtRef.current = Date.now(); };
 
   useEffect(()=>{
     const r = getRoomFromQuery();
@@ -156,8 +165,9 @@ function App(){
   useEffect(()=> { if(!players.includes(currentPlayer)) setCurrentPlayer(players[0] || ''); },[players]);
 
   // Local CRUD
-  function addBlankMatch(){ setMatches(prev => [...prev, { id: uid(), team1:'', team2:'' }]); }
+  function addBlankMatch(){ markEdited(); setMatches(prev => [...prev, { id: uid(), team1:'', team2:'' }]); }
   function addBatch(n=5){
+    markEdited();
     setMatches(prev=>{
       const list=[...prev];
       for(let i=0;i<n;i++) list.push({id:uid(),team1:'',team2:''});
@@ -165,28 +175,36 @@ function App(){
     });
   }
   function updateMatch(id, field, value){
+    markEdited();
     setMatches(prev => prev.map(m => m.id===id ? {...m, [field]: value} : m));
   }
   function deleteMatch(id){
     if(!confirm('Удалить матч?')) return;
+    markEdited();
     setMatches(prev => prev.filter(m => m.id!==id));
     setPredictions(prev => { const copy = {...prev}; delete copy[id]; return copy; });
     setResults(prev => { const copy = {...prev}; delete copy[id]; return copy; });
   }
   function clearAll(){
     if(!confirm('Очистить все матчи, прогнозы и результаты текущего тура?')) return;
+    markEdited();
     setMatches([]); setPredictions({}); setResults({});
   }
   function setPred(matchId, player, score1, score2){
+    markEdited();
     setPredictions(prev=>{
       const m = prev[matchId] ? {...prev[matchId]} : {};
       m[player] = { score1, score2 };
       return { ...prev, [matchId]: m };
     });
   }
-  function setRes(matchId, score1, score2){ setResults(prev=> ({ ...prev, [matchId]: { score1, score2 } })); }
+  function setRes(matchId, score1, score2){
+    markEdited();
+    setResults(prev=> ({ ...prev, [matchId]: { score1, score2 } }));
+  }
   function copyFromPlayer(source){
     if(!source || source===currentPlayer) return;
+    markEdited();
     setPredictions(prev=>{
       const copy = {...prev};
       matches.forEach(m=>{
@@ -201,6 +219,7 @@ function App(){
     });
   }
   function fillDefault(s1,s2){
+    markEdited();
     setPredictions(prev=>{
       const copy = {...prev};
       matches.forEach(m=>{
@@ -213,6 +232,7 @@ function App(){
   }
   function clearPredictionsFor(playerName = currentPlayer){
     if(!playerName) return;
+    markEdited();
     setPredictions(prev=>{
       const copy = {...prev};
       matches.forEach(m=>{
@@ -225,17 +245,19 @@ function App(){
       return copy;
     });
   }
-  function clearResults(){ if(!confirm('Очистить все результаты текущего тура?')) return; setResults({}); }
+  function clearResults(){ if(!confirm('Очистить все результаты текущего тура?')) return; markEdited(); setResults({}); }
 
-  // Players (добавлены — это и ломалось)
+  // Players
   function addPlayer(name){
     const n = (name || '').trim();
     if(!n) return;
     if(players.includes(n)){ alert('Такой игрок уже есть'); return; }
+    markEdited();
     setPlayers(prev => [...prev, n]);
   }
   function removePlayer(name){
     if(!confirm(`Удалить игрока "${name}"?`)) return;
+    markEdited();
     setPlayers(prev => prev.filter(p => p!==name));
     setPredictions(prev=>{
       const copy = {...prev};
@@ -296,6 +318,7 @@ function App(){
       predictions: JSON.parse(JSON.stringify(predictions)),
       points
     };
+    markEdited();
     setHistory(prev=> [round, ...prev]);
     setMatches([]); setPredictions({}); setResults({});
     const next = roundName.replace(/#(\d+)/, (_,n)=>`#${Number(n)+1}`);
@@ -305,6 +328,7 @@ function App(){
 
   function deleteHistoryRound(roundId){
     if(!confirm('Удалить запись истории тура?')) return;
+    markEdited();
     setHistory(prev => prev.filter(r => r.id!==roundId));
   }
 
@@ -339,14 +363,22 @@ function App(){
 
     unsubRef.current = ref.onSnapshot(async (snap)=>{
       const exists = snap.exists;
+
+      // Если печатаем — не трогаем UI, откладываем состояние
+      const editingNow = focusedFieldRef.current != null || (Date.now() - lastLocalEditAtRef.current) < EDIT_GRACE_MS;
+
       if(!hasInitialSyncRef.current){
         hasInitialSyncRef.current = true;
         if(exists){
           const remote = snap.data() || {};
-          isApplyingRemoteRef.current = true;
-          applyImportedData(remote);
-          lastRemoteAtRef.current = remote?._updatedAt || null;
-          isApplyingRemoteRef.current = false;
+          if(editingNow){
+            pendingRemoteRef.current = remote;
+          }else{
+            isApplyingRemoteRef.current = true;
+            applyImportedData(remote);
+            lastRemoteAtRef.current = remote?._updatedAt || null;
+            isApplyingRemoteRef.current = false;
+          }
         } else {
           try{ await ref.set(buildDataWithMeta()); }catch(e){ console.warn('init set error', e); }
         }
@@ -358,10 +390,15 @@ function App(){
         const remoteAt = remote?._updatedAt || null;
         if(remoteAt && remoteAt !== lastRemoteAtRef.current){
           if(remote._updatedBy !== DEVICE_ID){
-            isApplyingRemoteRef.current = true;
-            applyImportedData(remote);
-            lastRemoteAtRef.current = remoteAt;
-            isApplyingRemoteRef.current = false;
+            if(editingNow){
+              // отложим до окончания ввода
+              pendingRemoteRef.current = remote;
+            }else{
+              isApplyingRemoteRef.current = true;
+              applyImportedData(remote);
+              lastRemoteAtRef.current = remoteAt;
+              isApplyingRemoteRef.current = false;
+            }
           }else{
             lastRemoteAtRef.current = remoteAt;
           }
@@ -372,19 +409,39 @@ function App(){
     return ()=>{ if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; } };
   },[roomId]);
 
-  // Autosave (debounce ~1s)
+  // Autosave (debounce ~2s), не сохраняем пока печатают
   useEffect(()=>{
     if(!hasInitialSyncRef.current) return;
     if(isApplyingRemoteRef.current) return;
+
+    const editingNow = focusedFieldRef.current != null || (Date.now() - lastLocalEditAtRef.current) < EDIT_GRACE_MS;
+    if(editingNow) return;
+
     const handle = setTimeout(async ()=>{
       try{
         const rid = (roomId || 'default').trim();
         if(!rid) return;
         await db.collection('rooms').doc(rid).set(buildDataWithMeta(), {merge:true});
       }catch(e){ console.warn('autosave error', e); }
-    }, 1000);
+    }, AUTOSAVE_DELAY_MS);
+
     return ()=> clearTimeout(handle);
   }, [roundName, matches, players, predictions, results, history, roomId]);
+
+  // Когда пользователь завершил ввод (blur) — применяем отложенные удалённые данные
+  function handleBlur(){
+    focusedFieldRef.current = null;
+    setTimeout(()=>{
+      if(pendingRemoteRef.current){
+        const remote = pendingRemoteRef.current;
+        pendingRemoteRef.current = null;
+        isApplyingRemoteRef.current = true;
+        applyImportedData(remote);
+        lastRemoteAtRef.current = remote?._updatedAt || null;
+        isApplyingRemoteRef.current = false;
+      }
+    }, 50);
+  }
 
   // UI
   const [tab,setTab] = useState('setup');
@@ -406,12 +463,24 @@ function App(){
         <div className="toolbar">
           <div className="round-name">
             <strong>Тур:</strong>
-            <input value={roundName} onChange={e=>setRoundName(e.target.value)} placeholder="Название тура"/>
+            <input
+              value={roundName}
+              onChange={e=>{ setRoundName(e.target.value); markEdited(); }}
+              onFocus={()=>{ focusedFieldRef.current='roundName'; }}
+              onBlur={handleBlur}
+              placeholder="Название тура"
+            />
           </div>
 
           <div className="cloud-box">
             <strong>Код комнаты:</strong>
-            <input value={roomId} onChange={e=>setRoomId(e.target.value.trim())} placeholder="например, liga"/>
+            <input
+              value={roomId}
+              onChange={e=>{ setRoomId(e.target.value.trim()); markEdited(); }}
+              onFocus={()=>{ focusedFieldRef.current='roomId'; }}
+              onBlur={handleBlur}
+              placeholder="например, liga"
+            />
             <button className="btn btn-ghost" onClick={shareLink}>Скопировать ссылку</button>
           </div>
         </div>
@@ -451,15 +520,29 @@ function App(){
               ) : matches.map((m,idx)=>(
                 <tr key={m.id}>
                   <td>{idx+1}</td>
-                  <td className="team"><input type="text" value={m.team1} onChange={e=>updateMatch(m.id,'team1',e.target.value)} placeholder="Команда 1"/></td>
-                  <td className="team"><input type="text" value={m.team2} onChange={e=>updateMatch(m.id,'team2',e.target.value)} placeholder="Команда 2"/></td>
+                  <td className="team">
+                    <input type="text"
+                      value={m.team1}
+                      onChange={e=>updateMatch(m.id,'team1',e.target.value)}
+                      onFocus={()=>{ focusedFieldRef.current=`m:${m.id}:team1`; }}
+                      onBlur={handleBlur}
+                      placeholder="Команда 1"/>
+                  </td>
+                  <td className="team">
+                    <input type="text"
+                      value={m.team2}
+                      onChange={e=>updateMatch(m.id,'team2',e.target.value)}
+                      onFocus={()=>{ focusedFieldRef.current=`m:${m.id}:team2`; }}
+                      onBlur={handleBlur}
+                      placeholder="Команда 2"/>
+                  </td>
                   <td><button className="btn btn-ghost" onClick={()=>deleteMatch(m.id)}>Удалить</button></td>
                 </tr>
               ))}
               </tbody>
             </table>
             <div className="space"></div>
-            <div className="muted">Откройте тот же “Код комнаты” на другом устройстве — всё синхронизируется автоматически.</div>
+            <div className="muted">Можно добавлять сколько нужно матчей; данные сохраняются после небольшой паузы.</div>
           </div>
 
           <div className="card">
@@ -518,11 +601,19 @@ function App(){
                   <td className="team"><strong>{m.team1||'—'}</strong> vs <strong>{m.team2||'—'}</strong></td>
                   <td>
                     <div className="row" style={{justifyContent:'center'}}>
-                      <input type="number" min="0" value={Number.isInteger(pred.score1)?pred.score1:''}
-                             onChange={e=>setPred(m.id,currentPlayer, parseIntSafe(e.target.value), pred.score2)}/>
+                      <input type="number" min="0"
+                        value={Number.isInteger(pred.score1)?pred.score1:''}
+                        onChange={e=>setPred(m.id,currentPlayer, parseIntSafe(e.target.value), pred.score2)}
+                        onFocus={()=>{ focusedFieldRef.current=`pred:${m.id}:p1`; }}
+                        onBlur={handleBlur}
+                      />
                       <span>:</span>
-                      <input type="number" min="0" value={Number.isInteger(pred.score2)?pred.score2:''}
-                             onChange={e=>setPred(m.id,currentPlayer, pred.score1, parseIntSafe(e.target.value))}/>
+                      <input type="number" min="0"
+                        value={Number.isInteger(pred.score2)?pred.score2:''}
+                        onChange={e=>setPred(m.id,currentPlayer, pred.score1, parseIntSafe(e.target.value))}
+                        onFocus={()=>{ focusedFieldRef.current=`pred:${m.id}:p2`; }}
+                        onBlur={handleBlur}
+                      />
                     </div>
                   </td>
                   <td>
@@ -570,11 +661,19 @@ function App(){
                   <td className="team"><strong>{m.team1||'—'}</strong> vs <strong>{m.team2||'—'}</strong></td>
                   <td>
                     <div className="row" style={{justifyContent:'center'}}>
-                      <input type="number" min="0" value={Number.isInteger(res.score1)?res.score1:''}
-                             onChange={e=>setRes(m.id, parseIntSafe(e.target.value), res.score2)}/>
+                      <input type="number" min="0"
+                        value={Number.isInteger(res.score1)?res.score1:''}
+                        onChange={e=>setRes(m.id, parseIntSafe(e.target.value), res.score2)}
+                        onFocus={()=>{ focusedFieldRef.current=`res:${m.id}:r1`; }}
+                        onBlur={handleBlur}
+                      />
                       <span>:</span>
-                      <input type="number" min="0" value={Number.isInteger(res.score2)?res.score2:''}
-                             onChange={e=>setRes(m.id, res.score1, parseIntSafe(e.target.value))}/>
+                      <input type="number" min="0"
+                        value={Number.isInteger(res.score2)?res.score2:''}
+                        onChange={e=>setRes(m.id, res.score1, parseIntSafe(e.target.value))}
+                        onFocus={()=>{ focusedFieldRef.current=`res:${m.id}:r2`; }}
+                        onBlur={handleBlur}
+                      />
                     </div>
                   </td>
                   <td>
@@ -586,7 +685,7 @@ function App(){
             </tbody>
           </table>
           <div className="space"></div>
-          <div className="muted">Изменения синхронизируются мгновенно между всеми, кто открыл эту же комнату.</div>
+          <div className="muted">Изменения синхронизируются после паузы; ввод не будет сбрасываться во время печати.</div>
         </div>
       )}
 
@@ -687,7 +786,9 @@ function PlayersManager({players,addPlayer,removePlayer}){
     <div className="stack">
       <div className="row">
         <input className="table" style={{ width: 260 }} type="text" placeholder="Новый игрок"
-               value={name} onChange={e=>setName(e.target.value)}/>
+               value={name}
+               onChange={e=>setName(e.target.value)}
+        />
         <button className="btn btn-primary" onClick={()=>{ addPlayer(name); setName(''); }}>Добавить</button>
       </div>
       <div className="players">
