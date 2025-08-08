@@ -7,33 +7,26 @@
   <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.22.9/babel.min.js"></script>
+  <!-- Firebase (compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
   <style>
     :root{
-      --bg:#f5f7fb;
-      --card:#fff;
-      --text:#222;
-      --muted:#667084;
-      --brand:#0d6efd;
-      --brand-2:#00bcd4;
-      --ok:#19a974;
-      --warn:#ff9800;
-      --danger:#ef4444;
-      --border:#e5e7eb;
-      --shadow:0 6px 18px rgba(0,0,0,.06);
-      --radius:14px;
-      --radius-sm:10px;
+      --bg:#f5f7fb; --card:#fff; --text:#222; --muted:#667084;
+      --brand:#0d6efd; --brand-2:#00bcd4; --ok:#19a974; --warn:#ff9800; --danger:#ef4444;
+      --border:#e5e7eb; --shadow:0 6px 18px rgba(0,0,0,.06); --radius:14px; --radius-sm:10px;
     }
     *{box-sizing:border-box}
-    body{
-      margin:0; font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;
-      background:linear-gradient(135deg,#e8f0ff,#f8fbff 40%,#eefaf7); color:var(--text);
-    }
+    body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;
+      background:linear-gradient(135deg,#e8f0ff,#f8fbff 40%,#eefaf7);color:var(--text)}
     .wrap{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
-    header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:10px 0 20px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:10px 0 20px;flex-wrap:wrap}
     h1{margin:0;font-size:24px;font-weight:800;letter-spacing:.2px;background:linear-gradient(45deg,var(--brand),var(--brand-2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     .round-name{display:flex;gap:8px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:8px 12px;box-shadow:var(--shadow)}
     .round-name input{border:none;outline:none;font-size:14px;background:transparent;min-width:200px}
+    .cloud-box{display:flex;gap:8px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:8px 12px;box-shadow:var(--shadow)}
+    .cloud-box input{border:none;outline:none;font-size:14px;background:transparent;min-width:220px}
     .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
     .tab-btn{border:1px solid var(--border);background:var(--card);padding:10px 14px;border-radius:999px;cursor:pointer;font-weight:600;color:var(--muted)}
     .tab-btn.active{background:linear-gradient(45deg,var(--brand),var(--brand-2));color:#fff;border-color:transparent;box-shadow:var(--shadow)}
@@ -41,7 +34,6 @@
     @media(min-width:900px){.grid-2{grid-template-columns:1.15fr .85fr}}
     .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
     .card h2{margin:0 0 10px;font-size:18px}
-    .sub{color:var(--muted);font-size:13px}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .btn{border:none;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;display:inline-flex;gap:8px;align-items:center}
     .btn:disabled{opacity:.5;cursor:not-allowed}
@@ -58,20 +50,12 @@
     .table input[type=text]{width:100%;padding:8px;border:1px solid var(--border);border-radius:10px;background:#fff}
     .table .team{min-width:150px;text-align:left}
     .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 8px;font-weight:700;font-size:12px}
-    .pill-ok{background:#ecfdf5;color:#065f46}
-    .pill-warn{background:#fff7ed;color:#9a3412}
-    .pill-diff{background:#eef2ff;color:#3730a3}
-    .pill-bad{background:#fef2f2;color:#991b1b}
+    .pill-ok{background:#ecfdf5;color:#065f46}.pill-warn{background:#fff7ed;color:#9a3412}.pill-diff{background:#eef2ff;color:#3730a3}.pill-bad{background:#fef2f2;color:#991b1b}
     .stack{display:flex;flex-direction:column;gap:10px}
     .players{display:flex;gap:8px;flex-wrap:wrap}
     .player-btn{padding:8px 12px;border-radius:999px;border:1px solid var(--border);background:#fff;font-weight:700;cursor:pointer}
     .player-btn.active{background:var(--text);color:#fff;border-color:transparent}
-    .helper{background:#fff;border:1px dashed var(--border);padding:8px 10px;border-radius:10px;color:var(--muted);font-size:12px}
-    .textarea{width:100%;min-height:120px;border:1px solid var(--border);border-radius:12px;padding:10px;resize:vertical}
-    .right{display:flex;justify-content:flex-end}
     .space{height:8px}
-    .cloud-box{display:flex;gap:8px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:8px 12px;box-shadow:var(--shadow)}
-    .cloud-box input{border:none;outline:none;font-size:14px;background:transparent;min-width:280px}
   </style>
 </head>
 <body>
@@ -79,6 +63,21 @@
 <script type="text/babel">
 const {useState,useEffect,useMemo,useRef} = React;
 
+// Firebase config (ваши данные)
+const firebaseConfig = {
+  apiKey: "AIzaSyAET0m2j5YyvXK9Gp4gxJbfZCqL6R42N8U",
+  authDomain: "predict-8b1f4.firebaseapp.com",
+  projectId: "predict-8b1f4",
+  storageBucket: "predict-8b1f4.firebasestorage.app",
+  messagingSenderId: "1086430765447",
+  appId: "1:1086430765447:web:a85b5e8ff8392e55e93322"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+firebase.firestore().enablePersistence({synchronizeTabs:true}).catch(()=>{});
+
+// Local keys
 const STORAGE_KEYS = {
   round: 'fp_roundName',
   matches:'fp_matches',
@@ -86,8 +85,7 @@ const STORAGE_KEYS = {
   predictions:'fp_predictions',
   results:'fp_results',
   history:'fp_history',
-  cloudUrl:'fp_cloud_url',
-  autoSync:'fp_autoSync',
+  roomId:'fp_room_id',
 };
 
 function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
@@ -101,11 +99,12 @@ function getDeviceId(){
 }
 const DEVICE_ID = getDeviceId();
 
-function normalizeCloudUrl(u){
-  if(!u) return '';
-  let t = String(u).trim();
-  if(t.startsWith('http://')) t = 'https://' + t.slice(7);
-  return t;
+function getRoomFromQuery(){
+  try{
+    const p = new URLSearchParams(location.search);
+    const r = (p.get('room')||'').trim();
+    return r || null;
+  }catch{ return null; }
 }
 
 function outcome(a,b){ if(a>b) return 1; if(a<b) return -1; return 0; }
@@ -134,6 +133,7 @@ function usePersistentState(key, initial){
 }
 
 function App(){
+  // Local state
   const [roundName,setRoundName] = usePersistentState(STORAGE_KEYS.round, 'Тур #1');
   const [matches,setMatches] = usePersistentState(STORAGE_KEYS.matches, []);
   const [players,setPlayers] = usePersistentState(STORAGE_KEYS.players, ['Виталий','Сергей','Грок']);
@@ -141,22 +141,21 @@ function App(){
   const [predictions,setPredictions] = usePersistentState(STORAGE_KEYS.predictions, {});
   const [results,setResults] = usePersistentState(STORAGE_KEYS.results, {});
   const [history,setHistory] = usePersistentState(STORAGE_KEYS.history, []);
-  const [cloudUrl,_setCloudUrl] = usePersistentState(STORAGE_KEYS.cloudUrl, '');
-  const [autoSync,setAutoSync] = usePersistentState(STORAGE_KEYS.autoSync, true);
-
-  const setCloudUrl = (v)=> _setCloudUrl(normalizeCloudUrl(v));
-  useEffect(()=>{ // авто-исправление старого http->https при первом рендере
-    if(cloudUrl && cloudUrl.startsWith('http://')) _setCloudUrl(normalizeCloudUrl(cloudUrl));
-  },[]);
+  const [roomId,setRoomId] = usePersistentState(STORAGE_KEYS.roomId, getRoomFromQuery() || 'default');
 
   const isApplyingRemoteRef = useRef(false);
   const lastRemoteAtRef = useRef(null);
-  const didInitialCloudLoadRef = useRef(false);
+  const unsubRef = useRef(null);
+  const hasInitialSyncRef = useRef(false);
 
-  useEffect(()=> {
-    if(!players.includes(currentPlayer)) setCurrentPlayer(players[0] || '');
-  },[players]);
+  useEffect(()=>{
+    const r = getRoomFromQuery();
+    if(r && r!==roomId) setRoomId(r);
+  },[]);
 
+  useEffect(()=> { if(!players.includes(currentPlayer)) setCurrentPlayer(players[0] || ''); },[players]);
+
+  // Local CRUD
   function addBlankMatch(){ setMatches(prev => [...prev, { id: uid(), team1:'', team2:'' }]); }
   function addBatch(n=5){
     setMatches(prev=>{
@@ -178,7 +177,6 @@ function App(){
     if(!confirm('Очистить все матчи, прогнозы и результаты текущего тура?')) return;
     setMatches([]); setPredictions({}); setResults({});
   }
-
   function setPred(matchId, player, score1, score2){
     setPredictions(prev=>{
       const m = prev[matchId] ? {...prev[matchId]} : {};
@@ -187,7 +185,6 @@ function App(){
     });
   }
   function setRes(matchId, score1, score2){ setResults(prev=> ({ ...prev, [matchId]: { score1, score2 } })); }
-
   function copyFromPlayer(source){
     if(!source || source===currentPlayer) return;
     setPredictions(prev=>{
@@ -230,6 +227,7 @@ function App(){
   }
   function clearResults(){ if(!confirm('Очистить все результаты текущего тура?')) return; setResults({}); }
 
+  // Points
   const currentPoints = useMemo(()=>{
     const score = Object.fromEntries(players.map(p=>[p,0]));
     matches.forEach(m=>{
@@ -289,47 +287,12 @@ function App(){
     setHistory(prev => prev.filter(r => r.id!==roundId));
   }
 
-  function addPlayer(name){
-    const n = (name || '').trim();
-    if(!n) return;
-    if(players.includes(n)){ alert('Такой игрок уже есть'); return; }
-    setPlayers(prev => [...prev, n]);
-  }
-  function removePlayer(name){
-    if(!confirm(`Удалить игрока "${name}"?`)) return;
-    setPlayers(prev => prev.filter(p => p!==name));
-    setPredictions(prev=>{
-      const copy = {...prev};
-      Object.keys(copy).forEach(mid=>{
-        const per = { ...(copy[mid]||{}) };
-        delete per[name];
-        copy[mid]=per;
-      });
-      return copy;
-    });
-  }
-
+  // Serialize
   function buildData(){ return { roundName, matches, players, predictions, results, history }; }
   function buildDataWithMeta(){
     const data = buildData();
     return { ...data, _updatedAt: new Date().toISOString(), _updatedBy: DEVICE_ID };
   }
-
-  function exportData(){
-    const data = buildData();
-    navigator.clipboard.writeText(JSON.stringify(data,null,2)).then(()=>{
-      alert('Данные скопированы в буфер обмена!');
-    }).catch(()=>{
-      alert('Скопируйте вручную из открывшегося окна.');
-    });
-    const json = JSON.stringify(data,null,2);
-    const win = window.open('', '_blank', 'width=800,height=600');
-    if(win){
-      win.document.write(`<pre>${json.replace(/[<>&]/g, s=> ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>`);
-      win.document.close();
-    }
-  }
-
   function applyImportedData(data){
     try{
       setRoundName(data.roundName ?? roundName);
@@ -343,137 +306,77 @@ function App(){
     }
   }
 
-  function importData(){
-    const raw = prompt('Вставьте JSON экспорт');
-    if(!raw) return;
-    try{
-      const data = JSON.parse(raw);
-      applyImportedData(data);
-      alert('Импорт выполнен');
-    }catch(e){
-      alert('Некорректный JSON');
-    }
-  }
-
-  async function createCloudLink(){
-    try{
-      const res = await fetch('https://jsonblob.com/api/jsonBlob', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json', 'Accept':'application/json' },
-        body: JSON.stringify(buildDataWithMeta()),
-      });
-      if(!res.ok) throw new Error(`Код ${res.status}`);
-      const url = normalizeCloudUrl(res.headers.get('Location'));
-      if(!url) throw new Error('Сервер не вернул ссылку');
-      setCloudUrl(url);
-      lastRemoteAtRef.current = new Date().toISOString();
-      alert('Ссылка создана. Скопируйте её и храните в секрете.');
-    }catch(e){
-      alert('Не удалось создать ссылку: '+ e.message);
-    }
-  }
-
-  async function saveToCloud(silent=false){
-    const url = normalizeCloudUrl(cloudUrl);
-    if(!url){ if(!silent) alert('Сначала вставьте/создайте ссылку'); return; }
-    try{
-      const data = buildDataWithMeta();
-      const res = await fetch(url, {
-        method:'PUT',
-        headers:{ 'Content-Type':'application/json', 'Accept':'application/json' },
-        body: JSON.stringify(data),
-      });
-      if(!res.ok) throw new Error(`Код ${res.status}`);
-      lastRemoteAtRef.current = data._updatedAt;
-      if(!silent) alert('Сохранено в облако');
-    }catch(e){
-      if(!silent) alert('Ошибка сохранения: '+ e.message);
-      console.error('saveToCloud error:', e);
-    }
-  }
-
-  async function loadFromCloud(silent=false){
-    const url = normalizeCloudUrl(cloudUrl);
-    if(!url){ if(!silent) alert('Вставьте ссылку'); return; }
-    try{
-      const res = await fetch(url, { cache:'no-store', headers:{'Accept':'application/json'} });
-      if(!res.ok) throw new Error(`Код ${res.status}`);
-      const data = await res.json();
-      isApplyingRemoteRef.current = true;
-      applyImportedData(data);
-      lastRemoteAtRef.current = data?._updatedAt || null;
-      isApplyingRemoteRef.current = false;
-      if(!silent) alert('Загружено из облака');
-    }catch(e){
-      if(!silent) alert('Ошибка загрузки: '+ e.message);
-      console.error('loadFromCloud error:', e);
-    }
-  }
-
-  // Первичная автозагрузка при установке ссылки (один раз на устройство)
+  // Firestore realtime
   useEffect(()=>{
-    if(!cloudUrl || didInitialCloudLoadRef.current) return;
-    didInitialCloudLoadRef.current = true;
-    loadFromCloud(true);
-  }, [cloudUrl]);
+    if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
+    hasInitialSyncRef.current = false;
 
-  // Автосохранение (debounce 1с) при изменениях, если включена автосинхронизация
-  useEffect(()=>{
-    if(!autoSync || !cloudUrl) return;
-    if(isApplyingRemoteRef.current) return;
-    const handle = setTimeout(()=>{ saveToCloud(true); }, 1000);
-    return ()=> clearTimeout(handle);
-  }, [roundName, matches, players, predictions, results, history, cloudUrl, autoSync]);
+    const rid = (roomId || 'default').trim();
+    if(!rid) return;
 
-  // Автообновление: опрос раз в 5с и при возврате на вкладку
-  useEffect(()=>{
-    if(!autoSync || !cloudUrl) return;
-    let cancelled = false;
-    let etag = null;
+    const ref = db.collection('rooms').doc(rid);
 
-    async function poll(){
-      if(cancelled) return;
-      try{
-        const headers = {'Accept':'application/json'};
-        if(etag) headers['If-None-Match'] = etag;
-        const res = await fetch(normalizeCloudUrl(cloudUrl), { headers, cache:'no-store' });
-        if(res.status === 304){
-          // нет изменений
-        }else if(res.ok){
-          const newEtag = res.headers.get('ETag');
-          if(newEtag) etag = newEtag;
-          const remote = await res.json();
-          const remoteAt = remote?._updatedAt || null;
+    unsubRef.current = ref.onSnapshot(async (snap)=>{
+      const exists = snap.exists;
+      if(!hasInitialSyncRef.current){
+        hasInitialSyncRef.current = true;
+        if(exists){
+          const remote = snap.data() || {};
+          isApplyingRemoteRef.current = true;
+          applyImportedData(remote);
+          lastRemoteAtRef.current = remote?._updatedAt || null;
+          isApplyingRemoteRef.current = false;
+        } else {
+          try{ await ref.set(buildDataWithMeta()); }catch(e){ console.warn('init set error', e); }
+        }
+        return;
+      }
 
-          if(remoteAt && remoteAt !== lastRemoteAtRef.current){
-            if(remote._updatedBy !== DEVICE_ID){
-              isApplyingRemoteRef.current = true;
-              applyImportedData(remote);
-              lastRemoteAtRef.current = remoteAt;
-              isApplyingRemoteRef.current = false;
-            }else{
-              lastRemoteAtRef.current = remoteAt;
-            }
+      if(exists){
+        const remote = snap.data() || {};
+        const remoteAt = remote?._updatedAt || null;
+        if(remoteAt && remoteAt !== lastRemoteAtRef.current){
+          if(remote._updatedBy !== DEVICE_ID){
+            isApplyingRemoteRef.current = true;
+            applyImportedData(remote);
+            lastRemoteAtRef.current = remoteAt;
+            isApplyingRemoteRef.current = false;
+          }else{
+            lastRemoteAtRef.current = remoteAt;
           }
         }
-      }catch(e){
-        console.warn('poll error:', e);
-      } finally {
-        if(!cancelled) setTimeout(poll, 5000);
       }
-    }
+    });
 
-    poll();
-    const onVis = ()=>{ if(document.visibilityState === 'visible') poll(); };
-    document.addEventListener('visibilitychange', onVis);
+    return ()=>{ if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; } };
+  },[roomId]);
 
-    return ()=>{
-      cancelled = true;
-      document.removeEventListener('visibilitychange', onVis);
-    };
-  }, [cloudUrl, autoSync]);
+  // Autosave (debounce ~1s)
+  useEffect(()=>{
+    if(!hasInitialSyncRef.current) return;
+    if(isApplyingRemoteRef.current) return;
+    const handle = setTimeout(async ()=>{
+      try{
+        const rid = (roomId || 'default').trim();
+        if(!rid) return;
+        await db.collection('rooms').doc(rid).set(buildDataWithMeta(), {merge:true});
+      }catch(e){ console.warn('autosave error', e); }
+    }, 1000);
+    return ()=> clearTimeout(handle);
+  }, [roundName, matches, players, predictions, results, history, roomId]);
 
+  // UI
   const [tab,setTab] = useState('setup');
+
+  function shareLink(){
+    const url = new URL(location.href);
+    url.searchParams.set('room', roomId || 'default');
+    navigator.clipboard.writeText(url.toString()).then(()=>{
+      alert('Ссылка скопирована. Откройте её на других устройствах.');
+    }).catch(()=>{
+      prompt('Скопируйте ссылку:', url.toString());
+    });
+  }
 
   return (
     <>
@@ -485,20 +388,11 @@ function App(){
             <input value={roundName} onChange={e=>setRoundName(e.target.value)} placeholder="Название тура"/>
           </div>
 
-          <button className="btn btn-ghost" onClick={exportData}>Экспорт</button>
-          <button className="btn btn-ghost" onClick={importData}>Импорт</button>
-
           <div className="cloud-box">
-            <input value={cloudUrl} onChange={e=>setCloudUrl(e.target.value)} placeholder="Ссылка для общего доступа (jsonblob)"/>
+            <strong>Код комнаты:</strong>
+            <input value={roomId} onChange={e=>setRoomId(e.target.value.trim())} placeholder="например, liga"/>
+            <button className="btn btn-ghost" onClick={shareLink}>Скопировать ссылку</button>
           </div>
-          <button className="btn btn-ghost" onClick={createCloudLink}>Создать ссылку</button>
-          <button className="btn btn-ghost" onClick={()=>loadFromCloud(false)}>Загрузить</button>
-          <button className="btn btn-primary" onClick={()=>saveToCloud(false)}>Сохранить</button>
-
-          <label className="chip">
-            <input type="checkbox" checked={autoSync} onChange={e=>setAutoSync(e.target.checked)}/>
-            &nbsp;Автосинхронизация
-          </label>
         </div>
       </header>
 
@@ -544,7 +438,7 @@ function App(){
               </tbody>
             </table>
             <div className="space"></div>
-            <div className="helper">Совет: можно сначала набросать список матчей, затем перейти во вкладку «Прогнозы».</div>
+            <div className="muted">Откройте тот же “Код комнаты” на другом устройстве — всё синхронизируется автоматически.</div>
           </div>
 
           <div className="card">
@@ -671,7 +565,7 @@ function App(){
             </tbody>
           </table>
           <div className="space"></div>
-          <div className="helper">Подсказка: можно финализировать тур даже без результатов по всем матчам — в историю попадёт то, что введено.</div>
+          <div className="muted">Изменения синхронизируются мгновенно между всеми, кто открыл эту же комнату.</div>
         </div>
       )}
 
@@ -780,7 +674,7 @@ function PlayersManager({players,addPlayer,removePlayer}){
           <span key={p} className="chip">{p} <button className="btn btn-ghost" onClick={()=>removePlayer(p)}>×</button></span>
         ))}
       </div>
-      <div className="helper">Подсказка: удаление игрока также очищает его прогнозы в текущем туре.</div>
+      <div className="muted">Удаление игрока очищает его прогнозы в текущем туре.</div>
     </div>
   );
 }
