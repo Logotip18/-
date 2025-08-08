@@ -91,7 +91,6 @@ const STORAGE_KEYS = {
 };
 
 function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
-
 const DEVICE_ID_KEY = 'fp_device_id';
 function getDeviceId(){
   try{
@@ -102,11 +101,14 @@ function getDeviceId(){
 }
 const DEVICE_ID = getDeviceId();
 
-function outcome(a,b){
-  if(a>b) return 1;
-  if(a<b) return -1;
-  return 0;
+function normalizeCloudUrl(u){
+  if(!u) return '';
+  let t = String(u).trim();
+  if(t.startsWith('http://')) t = 'https://' + t.slice(7);
+  return t;
 }
+
+function outcome(a,b){ if(a>b) return 1; if(a<b) return -1; return 0; }
 function pointsFor(pred,res){
   if(pred==null || res==null) return 0;
   const {score1:ps1,score2:ps2} = pred||{};
@@ -127,9 +129,7 @@ function usePersistentState(key, initial){
       return raw ? JSON.parse(raw) : initial;
     }catch{ return initial; }
   });
-  useEffect(()=>{
-    try{ localStorage.setItem(key, JSON.stringify(state)); }catch{}
-  },[key,state]);
+  useEffect(()=>{ try{ localStorage.setItem(key, JSON.stringify(state)); }catch{} },[key,state]);
   return [state,setState];
 }
 
@@ -138,23 +138,26 @@ function App(){
   const [matches,setMatches] = usePersistentState(STORAGE_KEYS.matches, []);
   const [players,setPlayers] = usePersistentState(STORAGE_KEYS.players, ['Виталий','Сергей','Грок']);
   const [currentPlayer,setCurrentPlayer] = useState(()=> players[0] || '');
-  const [predictions,setPredictions] = usePersistentState(STORAGE_KEYS.predictions, {}); // {matchId: {player: {score1,score2}}}
-  const [results,setResults] = usePersistentState(STORAGE_KEYS.results, {}); // {matchId: {score1,score2}}
-  const [history,setHistory] = usePersistentState(STORAGE_KEYS.history, []); // [{id,roundName,date,matches,results,predictions,points}]
-  const [cloudUrl,setCloudUrl] = usePersistentState(STORAGE_KEYS.cloudUrl, '');
+  const [predictions,setPredictions] = usePersistentState(STORAGE_KEYS.predictions, {});
+  const [results,setResults] = usePersistentState(STORAGE_KEYS.results, {});
+  const [history,setHistory] = usePersistentState(STORAGE_KEYS.history, []);
+  const [cloudUrl,_setCloudUrl] = usePersistentState(STORAGE_KEYS.cloudUrl, '');
   const [autoSync,setAutoSync] = usePersistentState(STORAGE_KEYS.autoSync, true);
+
+  const setCloudUrl = (v)=> _setCloudUrl(normalizeCloudUrl(v));
+  useEffect(()=>{ // авто-исправление старого http->https при первом рендере
+    if(cloudUrl && cloudUrl.startsWith('http://')) _setCloudUrl(normalizeCloudUrl(cloudUrl));
+  },[]);
 
   const isApplyingRemoteRef = useRef(false);
   const lastRemoteAtRef = useRef(null);
+  const didInitialCloudLoadRef = useRef(false);
 
   useEffect(()=> {
     if(!players.includes(currentPlayer)) setCurrentPlayer(players[0] || '');
   },[players]);
 
-  function addBlankMatch(){
-    const newMatch = { id: uid(), team1:'', team2:'' };
-    setMatches(prev => [...prev, newMatch]);
-  }
+  function addBlankMatch(){ setMatches(prev => [...prev, { id: uid(), team1:'', team2:'' }]); }
   function addBatch(n=5){
     setMatches(prev=>{
       const list=[...prev];
@@ -168,16 +171,8 @@ function App(){
   function deleteMatch(id){
     if(!confirm('Удалить матч?')) return;
     setMatches(prev => prev.filter(m => m.id!==id));
-    setPredictions(prev => {
-      const copy = {...prev};
-      delete copy[id];
-      return copy;
-    });
-    setResults(prev => {
-      const copy = {...prev};
-      delete copy[id];
-      return copy;
-    });
+    setPredictions(prev => { const copy = {...prev}; delete copy[id]; return copy; });
+    setResults(prev => { const copy = {...prev}; delete copy[id]; return copy; });
   }
   function clearAll(){
     if(!confirm('Очистить все матчи, прогнозы и результаты текущего тура?')) return;
@@ -191,9 +186,7 @@ function App(){
       return { ...prev, [matchId]: m };
     });
   }
-  function setRes(matchId, score1, score2){
-    setResults(prev=> ({ ...prev, [matchId]: { score1, score2 } }));
-  }
+  function setRes(matchId, score1, score2){ setResults(prev=> ({ ...prev, [matchId]: { score1, score2 } })); }
 
   function copyFromPlayer(source){
     if(!source || source===currentPlayer) return;
@@ -235,10 +228,7 @@ function App(){
       return copy;
     });
   }
-  function clearResults(){
-    if(!confirm('Очистить все результаты текущего тура?')) return;
-    setResults({});
-  }
+  function clearResults(){ if(!confirm('Очистить все результаты текущего тура?')) return; setResults({}); }
 
   const currentPoints = useMemo(()=>{
     const score = Object.fromEntries(players.map(p=>[p,0]));
@@ -319,9 +309,7 @@ function App(){
     });
   }
 
-  function buildData(){
-    return { roundName, matches, players, predictions, results, history };
-  }
+  function buildData(){ return { roundName, matches, players, predictions, results, history }; }
   function buildDataWithMeta(){
     const data = buildData();
     return { ...data, _updatedAt: new Date().toISOString(), _updatedBy: DEVICE_ID };
@@ -371,14 +359,11 @@ function App(){
     try{
       const res = await fetch('https://jsonblob.com/api/jsonBlob', {
         method:'POST',
-        headers:{
-          'Content-Type':'application/json',
-          'Accept':'application/json'
-        },
+        headers:{ 'Content-Type':'application/json', 'Accept':'application/json' },
         body: JSON.stringify(buildDataWithMeta()),
       });
       if(!res.ok) throw new Error(`Код ${res.status}`);
-      const url = res.headers.get('Location');
+      const url = normalizeCloudUrl(res.headers.get('Location'));
       if(!url) throw new Error('Сервер не вернул ссылку');
       setCloudUrl(url);
       lastRemoteAtRef.current = new Date().toISOString();
@@ -389,15 +374,13 @@ function App(){
   }
 
   async function saveToCloud(silent=false){
-    if(!cloudUrl){ if(!silent) alert('Сначала вставьте/создайте ссылку'); return; }
+    const url = normalizeCloudUrl(cloudUrl);
+    if(!url){ if(!silent) alert('Сначала вставьте/создайте ссылку'); return; }
     try{
       const data = buildDataWithMeta();
-      const res = await fetch(cloudUrl, {
+      const res = await fetch(url, {
         method:'PUT',
-        headers:{
-          'Content-Type':'application/json',
-          'Accept':'application/json'
-        },
+        headers:{ 'Content-Type':'application/json', 'Accept':'application/json' },
         body: JSON.stringify(data),
       });
       if(!res.ok) throw new Error(`Код ${res.status}`);
@@ -405,13 +388,15 @@ function App(){
       if(!silent) alert('Сохранено в облако');
     }catch(e){
       if(!silent) alert('Ошибка сохранения: '+ e.message);
+      console.error('saveToCloud error:', e);
     }
   }
 
   async function loadFromCloud(silent=false){
-    if(!cloudUrl){ if(!silent) alert('Вставьте ссылку'); return; }
+    const url = normalizeCloudUrl(cloudUrl);
+    if(!url){ if(!silent) alert('Вставьте ссылку'); return; }
     try{
-      const res = await fetch(cloudUrl, { cache:'no-store', headers:{'Accept':'application/json'} });
+      const res = await fetch(url, { cache:'no-store', headers:{'Accept':'application/json'} });
       if(!res.ok) throw new Error(`Код ${res.status}`);
       const data = await res.json();
       isApplyingRemoteRef.current = true;
@@ -421,8 +406,16 @@ function App(){
       if(!silent) alert('Загружено из облака');
     }catch(e){
       if(!silent) alert('Ошибка загрузки: '+ e.message);
+      console.error('loadFromCloud error:', e);
     }
   }
+
+  // Первичная автозагрузка при установке ссылки (один раз на устройство)
+  useEffect(()=>{
+    if(!cloudUrl || didInitialCloudLoadRef.current) return;
+    didInitialCloudLoadRef.current = true;
+    loadFromCloud(true);
+  }, [cloudUrl]);
 
   // Автосохранение (debounce 1с) при изменениях, если включена автосинхронизация
   useEffect(()=>{
@@ -443,7 +436,7 @@ function App(){
       try{
         const headers = {'Accept':'application/json'};
         if(etag) headers['If-None-Match'] = etag;
-        const res = await fetch(cloudUrl, { headers, cache:'no-store' });
+        const res = await fetch(normalizeCloudUrl(cloudUrl), { headers, cache:'no-store' });
         if(res.status === 304){
           // нет изменений
         }else if(res.ok){
@@ -464,7 +457,7 @@ function App(){
           }
         }
       }catch(e){
-        // тихо игнорируем, попробуем позже
+        console.warn('poll error:', e);
       } finally {
         if(!cancelled) setTimeout(poll, 5000);
       }
