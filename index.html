@@ -83,7 +83,7 @@
 <script type="text/babel">
 const {useState,useEffect,useMemo,useRef} = React;
 
-// Firebase config (ваши данные)
+// Firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyAET0m2j5YyvXK9Gp4gxJbfZCqL6R42N8U",
   authDomain: "predict-8b1f4.firebaseapp.com",
@@ -97,7 +97,6 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 firebase.firestore().enablePersistence({synchronizeTabs:true}).catch(()=>{});
 
-// Local keys
 const STORAGE_KEYS = {
   round: 'fp_roundName',
   matches:'fp_matches',
@@ -122,8 +121,7 @@ const DEVICE_ID = getDeviceId();
 function getRoomFromQuery(){
   try{
     const p = new URLSearchParams(location.search);
-    const r = (p.get('room')||'').trim();
-    return r || null;
+    return (p.get('room')||'').trim() || null;
   }catch{ return null; }
 }
 
@@ -153,7 +151,6 @@ function usePersistentState(key, initial){
 }
 
 function App(){
-  // Local state
   const [roundName,setRoundName] = usePersistentState(STORAGE_KEYS.round, 'Тур #1');
   const [matches,setMatches] = usePersistentState(STORAGE_KEYS.matches, []);
   const [players,setPlayers] = usePersistentState(STORAGE_KEYS.players, ['Виталий','Сергей','Грок']);
@@ -163,10 +160,10 @@ function App(){
   const [history,setHistory] = usePersistentState(STORAGE_KEYS.history, []);
   const [roomId,setRoomId] = usePersistentState(STORAGE_KEYS.roomId, getRoomFromQuery() || 'default');
 
-  // Match-tab state
+  const [tab,setTab] = useState('setup');
   const [currentMatchIdx,setCurrentMatchIdx] = useState(0);
 
-  // Stabilization
+  // sync guards
   const isApplyingRemoteRef = useRef(false);
   const lastRemoteAtRef = useRef(null);
   const unsubRef = useRef(null);
@@ -175,8 +172,10 @@ function App(){
   const focusedFieldRef = useRef(null);
   const pendingRemoteRef = useRef(null);
   const lastLocalEditAtRef = useRef(0);
-  const AUTOSAVE_DELAY_MS = 2000;
-  const EDIT_GRACE_MS = 1200;
+
+  const AUTOSAVE_DELAY_MS = 2000;  // дебаунс
+  const EDIT_GRACE_MS   = 1000;    // считаться "печатает" первые 1с
+  const STILL_SAVE_MS   = 1500;    // даже при фокусе, если 1.5с нет ввода — сохранить
 
   const markEdited = ()=>{ lastLocalEditAtRef.current = Date.now(); };
 
@@ -191,7 +190,7 @@ function App(){
     if (currentMatchIdx < 0 || currentMatchIdx >= matches.length) setCurrentMatchIdx(0);
   }, [matches.length]);
 
-  // Local CRUD
+  // CRUD
   function addBlankMatch(){ markEdited(); setMatches(prev => [...prev, { id: uid(), team1:'', team2:'' }]); }
   function addBatch(n=5){
     markEdited();
@@ -366,13 +365,11 @@ function App(){
     return { ...data, _updatedAt: new Date().toISOString(), _updatedBy: DEVICE_ID };
   }
 
-  // ВАЖНО: безопасное применение удалённых данных (не затирает свежий локальный ввод)
   function applyRemoteData(remote){
     const remoteAt = Date.parse(remote?._updatedAt || '') || 0;
     const lastLocal = lastLocalEditAtRef.current || 0;
     const preferLocal = remoteAt && lastLocal && remoteAt <= lastLocal + 1000;
 
-    // matches
     const mergedMatches = (()=> {
       const byId = new Map();
       (remote.matches||[]).forEach(m=> byId.set(m.id, m));
@@ -380,14 +377,12 @@ function App(){
       return Array.from(byId.values());
     })();
 
-    // players
     const mergedPlayers = (()=> {
       if (!preferLocal) return remote.players ?? players;
       const set = new Set([...(players||[]), ...((remote.players)||[])]);
       return Array.from(set);
     })();
 
-    // results
     const mergedResults = (()=> {
       const out = preferLocal ? {...results} : {};
       Object.entries(remote.results||{}).forEach(([mid, r])=>{
@@ -404,7 +399,6 @@ function App(){
       return out;
     })();
 
-    // predictions
     const mergedPredictions = (()=> {
       const out = preferLocal ? JSON.parse(JSON.stringify(predictions)) : {};
       Object.entries(remote.predictions||{}).forEach(([mid, per])=>{
@@ -432,6 +426,21 @@ function App(){
     setHistory(remote.history ?? history);
   }
 
+  // Save helpers
+  async function saveNow(silent=false){
+    try{
+      const rid = (roomId || 'default').trim();
+      if(!rid) return;
+      const data = buildDataWithMeta();
+      await db.collection('rooms').doc(rid).set(data, {merge:true});
+      lastRemoteAtRef.current = data._updatedAt;
+      if(!silent) console.log('Saved');
+    }catch(e){
+      console.warn('save error', e);
+      if(!silent) alert('Ошибка сохранения: '+ e.message);
+    }
+  }
+
   // Firestore realtime
   useEffect(()=>{
     if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
@@ -444,7 +453,8 @@ function App(){
 
     unsubRef.current = ref.onSnapshot(async (snap)=>{
       const exists = snap.exists;
-      const editingNow = focusedFieldRef.current != null || (Date.now() - lastLocalEditAtRef.current) < EDIT_GRACE_MS;
+      const sinceEdit = Date.now() - (lastLocalEditAtRef.current || 0);
+      const editingNow = (focusedFieldRef.current != null && sinceEdit < EDIT_GRACE_MS);
 
       if(!hasInitialSyncRef.current){
         hasInitialSyncRef.current = true;
@@ -487,29 +497,23 @@ function App(){
     return ()=>{ if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; } };
   },[roomId]);
 
-  // Autosave (debounce ~2s), не сохраняем пока печатают
+  // Autosave: через 2с тишины; даже при фокусе, если 1.5с не было ввода — сохраняем
   useEffect(()=>{
     if(!hasInitialSyncRef.current) return;
     if(isApplyingRemoteRef.current) return;
 
-    const editingNow = focusedFieldRef.current != null || (Date.now() - lastLocalEditAtRef.current) < EDIT_GRACE_MS;
-    if(editingNow) return;
+    const sinceEdit = Date.now() - (lastLocalEditAtRef.current || 0);
+    const canSave = sinceEdit >= STILL_SAVE_MS;
+    if(!canSave) return;
 
-    const handle = setTimeout(async ()=>{
-      try{
-        const rid = (roomId || 'default').trim();
-        if(!rid) return;
-        await db.collection('rooms').doc(rid).set(buildDataWithMeta(), {merge:true});
-      }catch(e){ console.warn('autosave error', e); }
-    }, AUTOSAVE_DELAY_MS);
-
+    const handle = setTimeout(()=>{ saveNow(true); }, AUTOSAVE_DELAY_MS);
     return ()=> clearTimeout(handle);
   }, [roundName, matches, players, predictions, results, history, roomId]);
 
-  // После blur применяем отложенные удалённые данные
+  // При blur: применяем отложенное и сохраняем сразу
   function handleBlur(){
     focusedFieldRef.current = null;
-    setTimeout(()=>{
+    setTimeout(async ()=>{
       if(pendingRemoteRef.current){
         const remote = pendingRemoteRef.current;
         pendingRemoteRef.current = null;
@@ -518,10 +522,11 @@ function App(){
         lastRemoteAtRef.current = remote?._updatedAt || null;
         isApplyingRemoteRef.current = false;
       }
+      await saveNow(true);
     }, 50);
   }
 
-  // Helpers for match view
+  // Match helpers
   const currentMatch = matches[currentMatchIdx] || null;
   const currentMatchRes = currentMatch ? results[currentMatch.id] : null;
   const outcomeStats = useMemo(()=>{
@@ -538,26 +543,14 @@ function App(){
     return {home,draw,away,filled};
   },[players,predictions,currentMatchIdx,matches,results]);
 
-  function gotoPrevMatch(){
-    if(matches.length===0) return;
-    setCurrentMatchIdx(i=> (i-1+matches.length)%matches.length);
-  }
-  function gotoNextMatch(){
-    if(matches.length===0) return;
-    setCurrentMatchIdx(i=> (i+1)%matches.length);
-  }
-
-  // UI
-  const [tab,setTab] = useState('setup');
+  function gotoPrevMatch(){ if(matches.length===0) return; setCurrentMatchIdx(i=> (i-1+matches.length)%matches.length); }
+  function gotoNextMatch(){ if(matches.length===0) return; setCurrentMatchIdx(i=> (i+1)%matches.length); }
 
   function shareLink(){
     const url = new URL(location.href);
     url.searchParams.set('room', roomId || 'default');
-    navigator.clipboard.writeText(url.toString()).then(()=>{
-      alert('Ссылка скопирована. Откройте её на других устройствах.');
-    }).catch(()=>{
-      prompt('Скопируйте ссылку:', url.toString());
-    });
+    navigator.clipboard.writeText(url.toString()).then(()=>{ alert('Ссылка скопирована.'); })
+      .catch(()=>{ prompt('Скопируйте ссылку:', url.toString()); });
   }
 
   return (
@@ -586,6 +579,7 @@ function App(){
               placeholder="например, liga"
             />
             <button className="btn btn-ghost" onClick={shareLink}>Ссылка</button>
+            <button className="btn btn-primary" onClick={()=>saveNow(false)}>Сохранить</button>
           </div>
         </div>
       </header>
@@ -648,8 +642,6 @@ function App(){
                 </tbody>
               </table>
             </div>
-            <div className="space"></div>
-            <div className="muted">На узких экранах таблица прокручивается горизонтально.</div>
           </div>
 
           <div className="card">
@@ -758,8 +750,8 @@ function App(){
               </select>
             </div>
             <div className="match-title">
-              {currentMatch ? (<>
-                <strong>{currentMatch.team1||'—'}</strong> vs <strong>{currentMatch.team2||'—'}</strong>
+              {matches[currentMatchIdx] ? (<>
+                <strong>{matches[currentMatchIdx].team1||'—'}</strong> vs <strong>{matches[currentMatchIdx].team2||'—'}</strong>
               </>) : 'Нет матчей'}
             </div>
             <div className="seg mini">
@@ -769,7 +761,7 @@ function App(){
             </div>
           </div>
 
-          {!currentMatch ? (
+          {!matches[currentMatchIdx] ? (
             <div className="muted" style={{marginTop:8}}>Добавьте матчи во вкладке «Матчи».</div>
           ):(
             <>
@@ -779,15 +771,15 @@ function App(){
                   <span className="muted">Результат:</span>
                   <input type="number" min="0"
                     value={Number.isInteger(currentMatchRes?.score1)?currentMatchRes.score1:''}
-                    onChange={e=>setRes(currentMatch.id, parseIntSafe(e.target.value), currentMatchRes?.score2)}
-                    onFocus={()=>{ focusedFieldRef.current=`mres:${currentMatch.id}:r1`; }}
+                    onChange={e=>setRes(matches[currentMatchIdx].id, parseIntSafe(e.target.value), currentMatchRes?.score2)}
+                    onFocus={()=>{ focusedFieldRef.current=`mres:${matches[currentMatchIdx].id}:r1`; }}
                     onBlur={handleBlur}
                   />
                   <span>:</span>
                   <input type="number" min="0"
                     value={Number.isInteger(currentMatchRes?.score2)?currentMatchRes.score2:''}
-                    onChange={e=>setRes(currentMatch.id, currentMatchRes?.score1, parseIntSafe(e.target.value))}
-                    onFocus={()=>{ focusedFieldRef.current=`mres:${currentMatch.id}:r2`; }}
+                    onChange={e=>setRes(matches[currentMatchIdx].id, currentMatchRes?.score1, parseIntSafe(e.target.value))}
+                    onFocus={()=>{ focusedFieldRef.current=`mres:${matches[currentMatchIdx].id}:r2`; }}
                     onBlur={handleBlur}
                   />
                 </div>
@@ -804,7 +796,7 @@ function App(){
                   </thead>
                   <tbody>
                   {players.map(p=>{
-                    const pr = predictions[currentMatch.id]?.[p] || {};
+                    const pr = predictions[matches[currentMatchIdx].id]?.[p] || {};
                     const pts = pointsFor(pr, currentMatchRes);
                     return (
                       <tr key={p}>
@@ -813,15 +805,15 @@ function App(){
                           <div className="row" style={{justifyContent:'center'}}>
                             <input type="number" min="0"
                               value={Number.isInteger(pr.score1)?pr.score1:''}
-                              onChange={e=>setPred(currentMatch.id, p, parseIntSafe(e.target.value), pr.score2)}
-                              onFocus={()=>{ focusedFieldRef.current=`mpred:${currentMatch.id}:${p}:p1`; }}
+                              onChange={e=>setPred(matches[currentMatchIdx].id, p, parseIntSafe(e.target.value), pr.score2)}
+                              onFocus={()=>{ focusedFieldRef.current=`mpred:${matches[currentMatchIdx].id}:${p}:p1`; }}
                               onBlur={handleBlur}
                             />
                             <span>:</span>
                             <input type="number" min="0"
                               value={Number.isInteger(pr.score2)?pr.score2:''}
-                              onChange={e=>setPred(currentMatch.id, p, pr.score1, parseIntSafe(e.target.value))}
-                              onFocus={()=>{ focusedFieldRef.current=`mpred:${currentMatch.id}:${p}:p2`; }}
+                              onChange={e=>setPred(matches[currentMatchIdx].id, p, pr.score1, parseIntSafe(e.target.value))}
+                              onFocus={()=>{ focusedFieldRef.current=`mpred:${matches[currentMatchIdx].id}:${p}:p2`; }}
                               onBlur={handleBlur}
                             />
                           </div>
@@ -848,6 +840,7 @@ function App(){
           <h2>Результаты</h2>
           <div className="row">
             <button className="btn btn-ok" onClick={finalizeRound}>Финализировать тур в историю</button>
+            <button className="btn btn-primary" onClick={()=>saveNow(false)}>Сохранить</button>
             <button className="btn btn-danger" onClick={clearResults}>Очистить результаты</button>
           </div>
           <div className="table-wrap">
@@ -896,8 +889,6 @@ function App(){
               </tbody>
             </table>
           </div>
-          <div className="space"></div>
-          <div className="muted">На телефоне просто прокрутите таблицу по горизонтали.</div>
         </div>
       )}
 
@@ -975,12 +966,6 @@ function App(){
                       })}
                       </tbody>
                     </table>
-                  </div>
-                  <div className="space"></div>
-                  <div className="row" style={{flexWrap:'wrap',gap:8}}>
-                    {players.map(p=>(
-                      <span key={p} className="chip">{p}: <strong>{round.points[p] ?? 0}</strong></span>
-                    ))}
                   </div>
                 </div>
               ))}
