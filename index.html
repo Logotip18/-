@@ -227,6 +227,27 @@ function App(){
   }
   function clearResults(){ if(!confirm('Очистить все результаты текущего тура?')) return; setResults({}); }
 
+  // Players (добавлены — это и ломалось)
+  function addPlayer(name){
+    const n = (name || '').trim();
+    if(!n) return;
+    if(players.includes(n)){ alert('Такой игрок уже есть'); return; }
+    setPlayers(prev => [...prev, n]);
+  }
+  function removePlayer(name){
+    if(!confirm(`Удалить игрока "${name}"?`)) return;
+    setPlayers(prev => prev.filter(p => p!==name));
+    setPredictions(prev=>{
+      const copy = {...prev};
+      Object.keys(copy).forEach(mid=>{
+        const per = { ...(copy[mid]||{}) };
+        delete per[name];
+        copy[mid]=per;
+      });
+      return copy;
+    });
+  }
+
   // Points
   const currentPoints = useMemo(()=>{
     const score = Object.fromEntries(players.map(p=>[p,0]));
