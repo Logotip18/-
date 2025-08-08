@@ -77,7 +77,7 @@
 <body>
 <div id="root" class="wrap"></div>
 <script type="text/babel">
-const {useState,useEffect,useMemo} = React;
+const {useState,useEffect,useMemo,useRef} = React;
 
 const STORAGE_KEYS = {
   round: 'fp_roundName',
@@ -87,9 +87,20 @@ const STORAGE_KEYS = {
   results:'fp_results',
   history:'fp_history',
   cloudUrl:'fp_cloud_url',
+  autoSync:'fp_autoSync',
 };
 
 function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
+
+const DEVICE_ID_KEY = 'fp_device_id';
+function getDeviceId(){
+  try{
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if(!id){ id = uid(); localStorage.setItem(DEVICE_ID_KEY, id); }
+    return id;
+  }catch{ return uid(); }
+}
+const DEVICE_ID = getDeviceId();
 
 function outcome(a,b){
   if(a>b) return 1;
@@ -98,8 +109,8 @@ function outcome(a,b){
 }
 function pointsFor(pred,res){
   if(pred==null || res==null) return 0;
-  const {score1:ps1,score2:ps2} = pred;
-  const {score1:rs1,score2:rs2} = res;
+  const {score1:ps1,score2:ps2} = pred||{};
+  const {score1:rs1,score2:rs2} = res||{};
   if(ps1==null || ps2==null || rs1==null || rs2==null) return 0;
   if(ps1===rs1 && ps2===rs2) return 3;
   const sameOutcome = outcome(ps1,ps2)===outcome(rs1,rs2);
@@ -131,6 +142,10 @@ function App(){
   const [results,setResults] = usePersistentState(STORAGE_KEYS.results, {}); // {matchId: {score1,score2}}
   const [history,setHistory] = usePersistentState(STORAGE_KEYS.history, []); // [{id,roundName,date,matches,results,predictions,points}]
   const [cloudUrl,setCloudUrl] = usePersistentState(STORAGE_KEYS.cloudUrl, '');
+  const [autoSync,setAutoSync] = usePersistentState(STORAGE_KEYS.autoSync, true);
+
+  const isApplyingRemoteRef = useRef(false);
+  const lastRemoteAtRef = useRef(null);
 
   useEffect(()=> {
     if(!players.includes(currentPlayer)) setCurrentPlayer(players[0] || '');
@@ -307,6 +322,10 @@ function App(){
   function buildData(){
     return { roundName, matches, players, predictions, results, history };
   }
+  function buildDataWithMeta(){
+    const data = buildData();
+    return { ...data, _updatedAt: new Date().toISOString(), _updatedBy: DEVICE_ID };
+  }
 
   function exportData(){
     const data = buildData();
@@ -348,51 +367,118 @@ function App(){
     }
   }
 
-  // === Облако без логина (jsonblob.com) ===
   async function createCloudLink(){
     try{
       const res = await fetch('https://jsonblob.com/api/jsonBlob', {
         method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(buildData()),
+        headers:{
+          'Content-Type':'application/json',
+          'Accept':'application/json'
+        },
+        body: JSON.stringify(buildDataWithMeta()),
       });
       if(!res.ok) throw new Error(`Код ${res.status}`);
       const url = res.headers.get('Location');
       if(!url) throw new Error('Сервер не вернул ссылку');
       setCloudUrl(url);
+      lastRemoteAtRef.current = new Date().toISOString();
       alert('Ссылка создана. Скопируйте её и храните в секрете.');
     }catch(e){
       alert('Не удалось создать ссылку: '+ e.message);
     }
   }
 
-  async function saveToCloud(){
-    if(!cloudUrl){ alert('Сначала вставьте/создайте ссылку'); return; }
+  async function saveToCloud(silent=false){
+    if(!cloudUrl){ if(!silent) alert('Сначала вставьте/создайте ссылку'); return; }
     try{
+      const data = buildDataWithMeta();
       const res = await fetch(cloudUrl, {
         method:'PUT',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(buildData()),
+        headers:{
+          'Content-Type':'application/json',
+          'Accept':'application/json'
+        },
+        body: JSON.stringify(data),
       });
       if(!res.ok) throw new Error(`Код ${res.status}`);
-      alert('Сохранено в облако');
+      lastRemoteAtRef.current = data._updatedAt;
+      if(!silent) alert('Сохранено в облако');
     }catch(e){
-      alert('Ошибка сохранения: '+ e.message);
+      if(!silent) alert('Ошибка сохранения: '+ e.message);
     }
   }
 
-  async function loadFromCloud(){
-    if(!cloudUrl){ alert('Вставьте ссылку'); return; }
+  async function loadFromCloud(silent=false){
+    if(!cloudUrl){ if(!silent) alert('Вставьте ссылку'); return; }
     try{
-      const res = await fetch(cloudUrl, { cache:'no-store' });
+      const res = await fetch(cloudUrl, { cache:'no-store', headers:{'Accept':'application/json'} });
       if(!res.ok) throw new Error(`Код ${res.status}`);
       const data = await res.json();
+      isApplyingRemoteRef.current = true;
       applyImportedData(data);
-      alert('Загружено из облака');
+      lastRemoteAtRef.current = data?._updatedAt || null;
+      isApplyingRemoteRef.current = false;
+      if(!silent) alert('Загружено из облака');
     }catch(e){
-      alert('Ошибка загрузки: '+ e.message);
+      if(!silent) alert('Ошибка загрузки: '+ e.message);
     }
   }
+
+  // Автосохранение (debounce 1с) при изменениях, если включена автосинхронизация
+  useEffect(()=>{
+    if(!autoSync || !cloudUrl) return;
+    if(isApplyingRemoteRef.current) return;
+    const handle = setTimeout(()=>{ saveToCloud(true); }, 1000);
+    return ()=> clearTimeout(handle);
+  }, [roundName, matches, players, predictions, results, history, cloudUrl, autoSync]);
+
+  // Автообновление: опрос раз в 5с и при возврате на вкладку
+  useEffect(()=>{
+    if(!autoSync || !cloudUrl) return;
+    let cancelled = false;
+    let etag = null;
+
+    async function poll(){
+      if(cancelled) return;
+      try{
+        const headers = {'Accept':'application/json'};
+        if(etag) headers['If-None-Match'] = etag;
+        const res = await fetch(cloudUrl, { headers, cache:'no-store' });
+        if(res.status === 304){
+          // нет изменений
+        }else if(res.ok){
+          const newEtag = res.headers.get('ETag');
+          if(newEtag) etag = newEtag;
+          const remote = await res.json();
+          const remoteAt = remote?._updatedAt || null;
+
+          if(remoteAt && remoteAt !== lastRemoteAtRef.current){
+            if(remote._updatedBy !== DEVICE_ID){
+              isApplyingRemoteRef.current = true;
+              applyImportedData(remote);
+              lastRemoteAtRef.current = remoteAt;
+              isApplyingRemoteRef.current = false;
+            }else{
+              lastRemoteAtRef.current = remoteAt;
+            }
+          }
+        }
+      }catch(e){
+        // тихо игнорируем, попробуем позже
+      } finally {
+        if(!cancelled) setTimeout(poll, 5000);
+      }
+    }
+
+    poll();
+    const onVis = ()=>{ if(document.visibilityState === 'visible') poll(); };
+    document.addEventListener('visibilitychange', onVis);
+
+    return ()=>{
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [cloudUrl, autoSync]);
 
   const [tab,setTab] = useState('setup');
 
@@ -413,8 +499,13 @@ function App(){
             <input value={cloudUrl} onChange={e=>setCloudUrl(e.target.value)} placeholder="Ссылка для общего доступа (jsonblob)"/>
           </div>
           <button className="btn btn-ghost" onClick={createCloudLink}>Создать ссылку</button>
-          <button className="btn btn-ghost" onClick={loadFromCloud}>Загрузить</button>
-          <button className="btn btn-primary" onClick={saveToCloud}>Сохранить</button>
+          <button className="btn btn-ghost" onClick={()=>loadFromCloud(false)}>Загрузить</button>
+          <button className="btn btn-primary" onClick={()=>saveToCloud(false)}>Сохранить</button>
+
+          <label className="chip">
+            <input type="checkbox" checked={autoSync} onChange={e=>setAutoSync(e.target.checked)}/>
+            &nbsp;Автосинхронизация
+          </label>
         </div>
       </header>
 
